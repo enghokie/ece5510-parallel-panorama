@@ -5,6 +5,9 @@ include_directories(SYSTEM ${OpenCV_INCLUDE_DIRS})
 
 add_executable(ParallelPanorama ${SRC_LIST})
 
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set_property(TARGET ParallelPanorama PROPERTY CXX_STANDARD 17)
+
 target_link_libraries(ParallelPanorama ${OpenCV_LIBS})
 
 set(OpenCV_RUNTIME_LIBS ${OpenCV_INSTALL_PATH}/x64/vc15/bin/opencv_videoio_ffmpeg420_64.dll;
