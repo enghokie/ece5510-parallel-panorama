@@ -15,6 +15,11 @@ const float DISPLAY_PERCENTAGE = 0.3;
 const float STITCH_WIDTH_PERCENTAGE = 0.3;
 const float STITCH_HEIGHT_PERCENTAGE = 1.0;
 
+unsigned long TOTAL_STITCH_TIME = 0;
+unsigned long TOTAL_FINAL_STITCHES = 0;
+std::chrono::high_resolution_clock TIME;
+std::chrono::steady_clock::time_point START_TIME;
+
 enum StitcherMode
 {
     StitcherMode_Manual = 0,
@@ -68,6 +73,7 @@ int main(int argc, char* argv[])
             std::cout << "Loaded images from - " << entry.path() << std::endl;
     }
 
+    START_TIME = TIME.now();
     if (!stitchAllImgs(stitchMode, initImgLoader, stitcher, cvStitcher))
     {
         std::cerr << "Error(main): Could not stitch images!" << std::endl;
@@ -110,12 +116,6 @@ bool stitchImgs(StitcherMode mode,
 {
     static int imgNum = 0;
     std::vector<cv::Mat> nextImages;
-
-    std::cout << "Stitching " << curImages.size() << " images with "
-        << (mode == StitcherMode::StitcherMode_Manual ? "manual" : "opencv") << " mode." << std::endl;
-
-    std::chrono::high_resolution_clock time;
-    auto start = time.now();
     for (int i = 0; i < curImages.size(); i += 2)
     {
         cv::Mat curStitchedImg;
@@ -148,8 +148,6 @@ bool stitchImgs(StitcherMode mode,
 
         nextImages.push_back(std::move(curStitchedImg));
     }
-    auto end = time.now();
-    std::cout << "Total stitch time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << std::endl;
     curImages.clear();
 
     // Check if we're done
@@ -158,12 +156,19 @@ bool stitchImgs(StitcherMode mode,
         if (nextImages.empty())
             return false;
 
+        // Get the time taken to acquire this final stitched image
+        auto end = TIME.now();
+        TOTAL_STITCH_TIME += std::chrono::duration_cast<std::chrono::milliseconds>(end - START_TIME).count();
+
         // Acquired the final stitched image
         cv::Mat stitchedImg;
         cv::resize(nextImages.back(), stitchedImg, cv::Size(), DISPLAY_PERCENTAGE, DISPLAY_PERCENTAGE);
         cv::imshow("Stitched Image", stitchedImg);
-
         cv::waitKey(1);
+
+        std::cout << "Average time elapsed from last final stitched image: " << TOTAL_STITCH_TIME / ++TOTAL_FINAL_STITCHES << std::endl;
+        START_TIME = TIME.now();
+
         return true;
     }
 
