@@ -1,4 +1,5 @@
 #include "ImageStitcher.hpp"
+#include "CustomMatcher.hpp"
 
 const int MAX_FEATURES = 500;
 const float GOOD_MATCH_PERCENT = 0.15f;
@@ -76,12 +77,14 @@ const bool ImageStitcher::computeHomography(const std::pair<cv::Mat, cv::Mat>& i
     cv::Ptr<cv::Feature2D> orb = cv::ORB::create(MAX_FEATURES);
     orb->detectAndCompute(leftGray, cv::Mat(), keypoints1, descriptors1);
     orb->detectAndCompute(rightGray, cv::Mat(), keypoints2, descriptors2);
-
+    
     // Match features.
     std::vector<cv::DMatch> matches;
-    cv::Ptr<cv::DescriptorMatcher> matcher = cv::DescriptorMatcher::create("BruteForce-Hamming");
-    matcher->match(descriptors1, descriptors2, matches, cv::Mat());
-
+    CustomMatcher *matcher = new CustomMatcher(150,150, 200, 200, "BruteForce-Hamming");
+    matcher -> set_boundaries(rightGray, leftGray);
+    matches = matcher->match(keypoints1, keypoints2, descriptors1, descriptors2);
+    // cv::Ptr<cv::DescriptorMatcher> matcher = cv::DescriptorMatcher::create("BruteForce-Hamming");
+    // matcher->match(descriptors1, descriptors2, matches, cv::Mat());
     // Sort matches by score
     std::sort(matches.begin(), matches.end());
 

@@ -107,6 +107,7 @@ bool stitchAllImgs(StitcherMode mode,
 
         std::chrono::high_resolution_clock time;
         auto start = time.now();
+        #pragma omp parallel for num_threads (8)
         for (int i = 0; i < curImages.size(); i += 2)
         {
             cv::Mat curStitchedImg;

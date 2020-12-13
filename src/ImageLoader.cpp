@@ -17,7 +17,6 @@ bool ImageLoader::loadImages(std::string imgDirPath)
     {
         ++subDirBeginIdx;
     }
-
     unsigned int id = std::stoul(imgDirPath.substr(subDirBeginIdx, imgDirPath.size() - subDirBeginIdx));
     std::vector<cv::Mat> imgs;
     for (const auto &entry : std::filesystem::directory_iterator(imgDirPath))
