@@ -7,23 +7,23 @@ public:
 
     ImageStitcher() {};
     ~ImageStitcher() {};
-    
+
     void setHomography(const cv::Mat& homog);
-    cv::Mat getHomography();
-    bool getHomography(cv::Mat& homog);
 
-    bool computeHomography(const std::pair<cv::Mat, cv::Mat>& imgs,
-                           std::pair<cv::Mat, unsigned int>& homog);
+    const cv::Mat getHomography();
+    const bool getHomography(cv::Mat& homog);
 
-    bool computeHomography(const std::pair<cv::Mat, cv::Mat>& imgs,
-                           float roiWidthPerc,
-                           float roiHeightPerc,
-                           std::pair<cv::Mat, unsigned int>& homog);
+    const bool computeHomography(const std::pair<cv::Mat, cv::Mat>& imgs,
+                                 cv::Mat& homog);
+    const bool computeHomography(const std::pair<cv::Mat, cv::Mat>& imgs,
+                                 float roiWidthPerc,
+                                 float roiHeightPerc,
+                                 cv::Mat& homog);
 
-    bool stitchImages(const std::pair<cv::Mat, unsigned int>& homog,
-                      const std::vector<std::pair<cv::Mat, cv::Mat>>& imgPairs,
-                      std::vector<cv::Mat>& stitchedImgs);
-    
+    const bool stitchImages(const cv::Mat& homog,
+                            const std::vector<std::pair<cv::Mat, cv::Mat>>& imgPairs,
+                            std::vector<cv::Mat>& stitchedImgs);
+
 private:
     cv::Mat _homography;
 };
