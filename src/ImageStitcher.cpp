@@ -91,6 +91,7 @@ const bool ImageStitcher::computeHomography(const std::pair<cv::Mat, cv::Mat>& i
 
     // Extract location of good matches
     std::vector<cv::Point2f> points1, points2;
+    #pragma omp parallel for num_threads(8)
     for (size_t i = 0; i < matches.size(); i++)
     {
         cv::Point2f queryPt = keypoints1[matches[i].queryIdx].pt;
@@ -116,7 +117,7 @@ const bool ImageStitcher::manualStitch(const cv::Mat& homog,
         std::cerr << "Error(stitchImages): No homography or img pairs provided." << std::endl;
         return false;
     }
-
+    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < imgPairs.size(); i++)
     {
         std::pair<cv::Mat, cv::Mat> imgPair = imgPairs.at(i);
