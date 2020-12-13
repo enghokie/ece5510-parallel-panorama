@@ -8,10 +8,7 @@ NOTE: Top-level image diretory must contain subdirectories that contain images
         
 Output:
 Loaded images from - <subdirectory path images were successfully loaded from>
-.
-.
-.
+<Repeated for number of subdirectories>
+
 Average time elapsed from last final stitched image: <average-time-elasped>
-.
-.
-.
+<Repeated periodically while images are being stitched>
