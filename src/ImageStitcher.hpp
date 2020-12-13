@@ -4,7 +4,6 @@
 
 class ImageStitcher {
 public:
-
     ImageStitcher() {};
     ~ImageStitcher() {};
 
@@ -20,7 +19,7 @@ public:
                                  float roiHeightPerc,
                                  cv::Mat& homog);
 
-    const bool stitchImages(const cv::Mat& homog,
+    const bool manualStitch(const cv::Mat& homog,
                             const std::vector<std::pair<cv::Mat, cv::Mat>>& imgPairs,
                             std::vector<cv::Mat>& stitchedImgs);
 

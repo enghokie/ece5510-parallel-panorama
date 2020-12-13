@@ -9,21 +9,54 @@
 #include "ImageStitcher.hpp"
 #include "ImageLoader.hpp"
 
-typedef std::vector<std::pair<cv::Mat, cv::Mat>> ImgPairs;
+typedef std::pair<cv::Mat, cv::Mat> ImgPair;
 
-bool stitchAllImgs(ImageLoader& imgLoader, cv::Mat& stitchedImg);
-bool stitchImgs(const ImgPairs& imgPairs, float roiWidthPerc, float roiHeightPerc, std::vector<cv::Mat>& stitchedImgs);
+const float DISPLAY_PERCENTAGE = 0.3;
+const float STITCH_WIDTH_PERCENTAGE = 0.3;
+const float STITCH_HEIGHT_PERCENTAGE = 1.0;
+
+enum StitcherMode
+{
+    StitcherMode_Manual = 0,
+    StitcherMode_OpenCV = 1
+};
+
+bool stitchAllImgs(StitcherMode mode,
+                   ImageLoader& imgLoader,
+                   ImageStitcher& stitcher,
+                   cv::Ptr<cv::Stitcher> cvStitcher,
+                   cv::Mat& stitchedImg);
+
+bool manualStitchImgs(ImageStitcher& stitcher,
+                      const ImgPair& imgPairs,
+                      float roiWidthPerc,
+                      float roiHeightPerc,
+                      cv::Mat& stitchedImg);
+
 void printUsage();
 
 int main(int argc, char* argv[])
 {
-    if (argc != 2) {
+    if (argc != 3) {
         printUsage();
         return 1;
     }
 
+    StitcherMode stitchMode = StitcherMode_Manual;
+    cv::Ptr<cv::Stitcher> cvStitcher;
+    ImageStitcher stitcher;
+    if (std::string(argv[1]).find("opencv") != std::string::npos)
+    {
+        stitchMode = StitcherMode_OpenCV;
+        cvStitcher = cv::Stitcher::create();
+        cvStitcher->setRegistrationResol(-1);
+        cvStitcher->setSeamEstimationResol(-1);
+        cvStitcher->setCompositingResol(-1);
+        cvStitcher->setPanoConfidenceThresh(0.3);
+    }
+
     ImageLoader initImgLoader;
-    for (const auto& entry : std::filesystem::directory_iterator(argv[1]))
+    for (const auto& entry : std::filesystem::directory_iterator(argv[2]))
     {
         if (!initImgLoader.loadImages(entry.path().string()))
             std::cerr << "Error(main): Failed to load images from directory - " << entry.path() << std::endl;
@@ -32,50 +65,84 @@ int main(int argc, char* argv[])
     }
 
     cv::Mat stitchedImg;
-    if (!stitchAllImgs(initImgLoader, stitchedImg))
+    if (!stitchAllImgs(stitchMode, initImgLoader, stitcher, cvStitcher, stitchedImg))
     {
         std::cerr << "Error(main): Could not stitch images!" << std::endl;
         return 1;
     }
 
-    cv::resize(stitchedImg, stitchedImg, cv::Size(), 0.25, 0.25);
+    cv::resize(stitchedImg, stitchedImg, cv::Size(), DISPLAY_PERCENTAGE, DISPLAY_PERCENTAGE);
     cv::imshow("Stitched Image", stitchedImg);
     
     cv::waitKey(0);
     return 0;
 }
 
-bool stitchAllImgs(ImageLoader& imgLoader, cv::Mat& stitchedImg)
+
+bool stitchAllImgs(StitcherMode mode,
+                   ImageLoader& imgLoader,
+                   ImageStitcher& stitcher,
+                   cv::Ptr<cv::Stitcher> cvStitcher,
+                   cv::Mat& stitchedImg)
 {
     static int imgNum = 0;
     ImageLoader nextImages;
-    for (int i = 0; i < imgLoader.getMaxImgId(); i += 2)
+    std::vector<cv::Mat> curImages;
+    while (true)
     {
-        std::vector<cv::Mat> leftImgs;
-        if (!imgLoader.getImages(i + 1, leftImgs))
+        for (int i = 0; i < imgLoader.getMaxImgId(); i++)
         {
-            std::cerr << "Error(main): No images for id - " << i + 1 << std::endl;
-            continue;
+            cv::Mat img;
+            if (!imgLoader.popImage(i + 1, img))
+                break;
+
+            curImages.push_back(std::move(img));
         }
 
-        std::vector<cv::Mat> rightImgs;
-        if (!imgLoader.getImages(i + 2, rightImgs))
-        {
-            std::cerr << "Error(main): No images for id - " << i + 1 << std::endl;
-            continue;
-        }
+        if (curImages.empty())
+            break;
 
-        size_t numImgs(std::min(leftImgs.size(), rightImgs.size()));
-        ImgPairs imgPairs(numImgs);
-        for (int i = 0; i < numImgs; i++)
-        {
-            imgPairs.at(i).first = std::move(leftImgs.at(i));
-            imgPairs.at(i).second = std::move(rightImgs.at(i));
-        }
+        std::cout << "Stitching " << curImages.size() << " images with "
+                  << (mode == StitcherMode::StitcherMode_Manual ? "manual" : "opencv") << " mode." << std::endl;
 
-        std::vector<cv::Mat> stitchedImgs;
-        if (stitchImgs(imgPairs, 0.5, 1.0, stitchedImgs))
-            nextImages.addImages(nextImages.getMaxImgId() + 1, stitchedImgs);
+        std::chrono::high_resolution_clock time;
+        auto start = time.now();
+        for (int i = 0; i < curImages.size(); i += 2)
+        {
+            cv::Mat curStitchedImg;
+            if (mode == StitcherMode_OpenCV)
+            {
+                std::vector<cv::Mat> imgs = { curImages[i], curImages[i + 1], };
+                if (cvStitcher.empty())
+                {
+                    std::cerr << "Error(stitchAllImgs): OpenCV Stitcher is null." << std::endl;
+                    return false;
+                }
+
+                cv::Stitcher::Status res = cvStitcher->stitch(imgs, curStitchedImg);
+                if (res != cv::Stitcher::OK)
+                {
+                    std::cerr << "Error(stitchAllImgs): Failed to stitch images with opencv for index i - "
+                              << i << ", Error code: " << res << std::endl;
+                    continue;
+                }
+            }
+            else
+            {
+                ImgPair imgPair(curImages[i], curImages[i + 1]);
+                if (!manualStitchImgs(stitcher, imgPair, STITCH_WIDTH_PERCENTAGE, STITCH_HEIGHT_PERCENTAGE, curStitchedImg))
+                {
+                    std::cerr << "Error(stitchAllImgs): Failed to manually stitch images for index i - " << i << std::endl;
+                    continue;
+                }
+            }
+
+            std::vector<cv::Mat> curStitchedImgs = { curStitchedImg };
+            nextImages.addImages(nextImages.getMaxImgId() + 1, curStitchedImgs);
+        }
+        auto end = time.now();
+        std::cout << "Total stitch time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << std::endl;
+        curImages.clear();
     }
 
     // Check if we're done
@@ -90,59 +157,50 @@ bool stitchAllImgs(ImageLoader& imgLoader, cv::Mat& stitchedImg)
         return true;
     }
 
-    return stitchAllImgs(nextImages, stitchedImg);
+    return stitchAllImgs(mode, nextImages, stitcher, cvStitcher, stitchedImg);
 }
 
-bool stitchImgs(const ImgPairs& imgPairs, float roiWidthPerc, float roiHeightPerc, std::vector<cv::Mat>& stitchedImgs)
+bool manualStitchImgs(ImageStitcher& stitcher,
+                      const ImgPair& imgPair,
+                      float roiWidthPerc,
+                      float roiHeightPerc,
+                      cv::Mat& stitchedImg)
 {
-    std::vector<cv::Mat> homogs;
-    ImageStitcher imgStitcher;
-    std::chrono::high_resolution_clock time;
-
-    for (size_t i = 0; i < imgPairs.size(); i++)
+    cv::Mat homography;
+    if (roiWidthPerc <= 0.0 || roiHeightPerc <= 0.0)
     {
-        printf("Computing homography ROI\n");
-        cv::Mat homography;
-        auto start = time.now();
-        if (roiWidthPerc <= 0.0 || roiHeightPerc <= 0.0)
+        if (!stitcher.computeHomography(imgPair, homography))
         {
-            if (!imgStitcher.computeHomography(imgPairs.at(i), homography))
-            {
-                std::cerr << "Error(stitchImgs): Failed to compute homography for images at index" << i << std::endl;
-                continue;
-            }
+            std::cerr << "Error(manualStitchImgs): Failed to compute homography for images." << std::endl;
+            return false;
         }
-        else
-        {
-            if (!imgStitcher.computeHomography(imgPairs.at(i), roiWidthPerc, roiHeightPerc, homography))
-            {
-                std::cerr << "Error(stitchImgs): Failed to compute homography-roi for images at index" << i << std::endl;
-                continue;
-            }
-        }
-        auto end = time.now();
-        homogs.push_back(homography);
-        printf("Done computing homography ROI: %lldms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
-
-        printf("Stitching Images\n");
-        std::vector<std::pair<cv::Mat, cv::Mat>> curPair = { imgPairs.at(i) };
-        std::vector<cv::Mat> curStitchedImgs;
-        start = time.now();
-        if (!imgStitcher.stitchImages(homogs.at(i), curPair, curStitchedImgs))
-        {
-            std::cerr << "Error(stitchImgs): Failed to stitch images at index " << i << std::endl;
-            continue;
-        }
-        end = time.now();
-        printf("Done stitching images: %lldms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
-        stitchedImgs.push_back(curStitchedImgs.front());
     }
+    else
+    {
+        if (!stitcher.computeHomography(imgPair, roiWidthPerc, roiHeightPerc, homography))
+        {
+            std::cerr << "Error(manualStitchImgs): Failed to compute homography-roi for images." << std::endl;
+            return false;
+        }
+    }
+
+    std::vector<ImgPair> imgPairs = { imgPair };
+    std::vector<cv::Mat> curStitchedImgs;
+    if (!stitcher.manualStitch(homography, imgPairs, curStitchedImgs))
+    {
+        std::cerr << "Error(manualStitchImgs): Failed to stitch images." << std::endl;
+        return false;
+    }
+
+    stitchedImg = std::move(curStitchedImgs.front());
+    if (stitchedImg.empty())
+        return false;
 
     return true;
 }
 
 void printUsage() {
-    printf("ParallelPanorama <top-level-img-directory-path>\n");
+    printf("ParallelPanorama <stitcher-mode | (manual) (opencv)> <top-level-img-directory-path>\n");
     printf("NOTE: Top-level image diretory must contain subdirectories that contain images\n");
     printf("\tand are named with a numeric value to represent the image stitch position");
 }

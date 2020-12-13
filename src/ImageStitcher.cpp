@@ -38,6 +38,12 @@ const bool ImageStitcher::computeHomography(const std::pair<cv::Mat, cv::Mat>& i
     if (roiWidthPerc <= 0.0 || roiHeightPerc <= 0.0)
         return false;
 
+    if (imgs.first.empty() || imgs.second.empty())
+    {
+        std::cerr << "Error(computeHomography): One or both of the images are empty." << std::endl;
+        return false;
+    }
+
     cv::Mat leftImg = imgs.first;
     cv::Mat rightImg = imgs.second;
 
@@ -101,12 +107,15 @@ const bool ImageStitcher::computeHomography(const std::pair<cv::Mat, cv::Mat>& i
     return true;
 }
 
-const bool ImageStitcher::stitchImages(const cv::Mat& homog,
+const bool ImageStitcher::manualStitch(const cv::Mat& homog,
                                        const std::vector<std::pair<cv::Mat, cv::Mat>>& imgPairs,
                                        std::vector<cv::Mat>& stitchedImgs)
 {
     if (homog.empty() || imgPairs.empty())
+    {
+        std::cerr << "Error(stitchImages): No homography or img pairs provided." << std::endl;
         return false;
+    }
 
     for (int i = 0; i < imgPairs.size(); i++)
     {
@@ -120,12 +129,13 @@ const bool ImageStitcher::stitchImages(const cv::Mat& homog,
             continue;
         }
 
-        // Warp source image to destination based on homography
+        // Warp right image to left image based on homography
         unsigned int minImgHeight = std::min(leftImg.rows, rightImg.rows);
         unsigned int totalImgWidth = leftImg.cols + rightImg.cols;
         cv::Rect rightImgRoi(0, 0, rightImg.cols, minImgHeight);
         cv::Mat stitchedImg(cv::Size(totalImgWidth, minImgHeight), rightImg.type());
-        cv::warpPerspective(rightImg(rightImgRoi), stitchedImg, homog, stitchedImg.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0, 255, 0));
+        cv::warpPerspective(rightImg(rightImgRoi), stitchedImg, homog, stitchedImg.size(),
+                            cv::INTER_NEAREST, cv::BORDER_CONSTANT, cv::Scalar(0, 255, 0));
 
         // Now find the extra pixels
         int widthEndIdx = totalImgWidth;
