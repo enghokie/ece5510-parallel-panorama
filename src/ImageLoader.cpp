@@ -82,13 +82,13 @@ bool ImageLoader::loadImages(std::vector<std::string> imgDirPaths)
 
 const void ImageLoader::getImgPairs(std::vector<ImgIdPair>& imgPairs)
 {
-    for (auto& imgPair : _imgPairs)
+    for (auto imgPair : _imgPairs)
         imgPairs.push_back(std::move(imgPair));
 }
 
 const bool ImageLoader::getImgPairs(unsigned int id, std::vector<ImgIdPair>& imgPairs)
 {
-    for (auto& imgPair : _imgPairs)
+    for (auto imgPair : _imgPairs)
     {
         if (imgPair.first == id)
         {
@@ -106,12 +106,40 @@ const bool ImageLoader::getImages(unsigned int id, std::vector<cv::Mat>& imgs)
     {
         if (imgPair.first == id)
         {
-            if (imgPair.second->size() < 0)
+            if (imgPair.second->empty())
                 return false;
 
             for (auto img : *imgPair.second)
-                imgs.push_back(std::move(img));
-            return true;
+            {
+                if (!img.empty())
+                    imgs.push_back(std::move(img));
+            }
+
+            if (!imgs.empty())
+                return true;
+
+            break;
+        }
+    }
+
+    return false;
+}
+
+const bool ImageLoader::popImage(unsigned int id, cv::Mat& img)
+{
+    for (auto imgPair : _imgPairs)
+    {
+        if (imgPair.first == id)
+        {
+            if (imgPair.second->empty())
+                return false;
+
+            img = std::move(imgPair.second->back());
+            imgPair.second->pop_back();
+            if (!img.empty())
+                return true;
+
+            break;
         }
     }
 

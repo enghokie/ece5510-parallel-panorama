@@ -22,6 +22,8 @@ public:
     const bool getImgPairs(unsigned int id, std::vector<ImgIdPair>& imgPairs);
     const bool getImages(unsigned int id, std::vector<cv::Mat>& imgs);
 
+    const bool popImage(unsigned int id, cv::Mat& img);
+
     bool addImage(unsigned int id, cv::Mat& img);
     bool addImages(unsigned int id, std::vector<cv::Mat>& imgs);
 
