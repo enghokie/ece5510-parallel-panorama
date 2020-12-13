@@ -24,8 +24,12 @@ enum StitcherMode
 bool stitchAllImgs(StitcherMode mode,
                    ImageLoader& imgLoader,
                    ImageStitcher& stitcher,
-                   cv::Ptr<cv::Stitcher> cvStitcher,
-                   cv::Mat& stitchedImg);
+                   cv::Ptr<cv::Stitcher> cvStitcher);
+
+bool stitchImgs(StitcherMode mode,
+                std::vector<cv::Mat> curImages,
+                ImageStitcher& stitcher,
+                cv::Ptr<cv::Stitcher> cvStitcher);
 
 bool manualStitchImgs(ImageStitcher& stitcher,
                       const ImgPair& imgPairs,
@@ -64,17 +68,11 @@ int main(int argc, char* argv[])
             std::cout << "Loaded images from - " << entry.path() << std::endl;
     }
 
-    cv::Mat stitchedImg;
-    if (!stitchAllImgs(stitchMode, initImgLoader, stitcher, cvStitcher, stitchedImg))
+    if (!stitchAllImgs(stitchMode, initImgLoader, stitcher, cvStitcher))
     {
         std::cerr << "Error(main): Could not stitch images!" << std::endl;
         return 1;
     }
-
-    cv::resize(stitchedImg, stitchedImg, cv::Size(), DISPLAY_PERCENTAGE, DISPLAY_PERCENTAGE);
-    cv::imshow("Stitched Image", stitchedImg);
-    
-    cv::waitKey(0);
     return 0;
 }
 
@@ -82,14 +80,11 @@ int main(int argc, char* argv[])
 bool stitchAllImgs(StitcherMode mode,
                    ImageLoader& imgLoader,
                    ImageStitcher& stitcher,
-                   cv::Ptr<cv::Stitcher> cvStitcher,
-                   cv::Mat& stitchedImg)
+                   cv::Ptr<cv::Stitcher> cvStitcher)
 {
-    static int imgNum = 0;
-    ImageLoader nextImages;
-    std::vector<cv::Mat> curImages;
     while (true)
     {
+        std::vector<cv::Mat> curImages;
         for (int i = 0; i < imgLoader.getMaxImgId(); i++)
         {
             cv::Mat img;
@@ -102,62 +97,80 @@ bool stitchAllImgs(StitcherMode mode,
         if (curImages.empty())
             break;
 
-        std::cout << "Stitching " << curImages.size() << " images with "
-                  << (mode == StitcherMode::StitcherMode_Manual ? "manual" : "opencv") << " mode." << std::endl;
-
-        std::chrono::high_resolution_clock time;
-        auto start = time.now();
-        for (int i = 0; i < curImages.size(); i += 2)
-        {
-            cv::Mat curStitchedImg;
-            if (mode == StitcherMode_OpenCV)
-            {
-                std::vector<cv::Mat> imgs = { curImages[i], curImages[i + 1], };
-                if (cvStitcher.empty())
-                {
-                    std::cerr << "Error(stitchAllImgs): OpenCV Stitcher is null." << std::endl;
-                    return false;
-                }
-
-                cv::Stitcher::Status res = cvStitcher->stitch(imgs, curStitchedImg);
-                if (res != cv::Stitcher::OK)
-                {
-                    std::cerr << "Error(stitchAllImgs): Failed to stitch images with opencv for index i - "
-                              << i << ", Error code: " << res << std::endl;
-                    continue;
-                }
-            }
-            else
-            {
-                ImgPair imgPair(curImages[i], curImages[i + 1]);
-                if (!manualStitchImgs(stitcher, imgPair, STITCH_WIDTH_PERCENTAGE, STITCH_HEIGHT_PERCENTAGE, curStitchedImg))
-                {
-                    std::cerr << "Error(stitchAllImgs): Failed to manually stitch images for index i - " << i << std::endl;
-                    continue;
-                }
-            }
-
-            std::vector<cv::Mat> curStitchedImgs = { curStitchedImg };
-            nextImages.addImages(nextImages.getMaxImgId() + 1, curStitchedImgs);
-        }
-        auto end = time.now();
-        std::cout << "Total stitch time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << std::endl;
-        curImages.clear();
+        stitchImgs(mode, curImages, stitcher, cvStitcher);
     }
 
-    // Check if we're done
-    if (nextImages.getMaxImgId() < 2)
+    return true;
+}
+
+bool stitchImgs(StitcherMode mode,
+                std::vector<cv::Mat> curImages,
+                ImageStitcher& stitcher,
+                cv::Ptr<cv::Stitcher> cvStitcher)
+{
+    static int imgNum = 0;
+    std::vector<cv::Mat> nextImages;
+
+    std::cout << "Stitching " << curImages.size() << " images with "
+        << (mode == StitcherMode::StitcherMode_Manual ? "manual" : "opencv") << " mode." << std::endl;
+
+    std::chrono::high_resolution_clock time;
+    auto start = time.now();
+    for (int i = 0; i < curImages.size(); i += 2)
     {
-        std::vector<cv::Mat> images;
-        if (!nextImages.getImages(1, images))
+        cv::Mat curStitchedImg;
+        if (mode == StitcherMode_OpenCV)
+        {
+            std::vector<cv::Mat> imgs = { curImages[i], curImages[i+1], };
+            if (cvStitcher.empty())
+            {
+                std::cerr << "Error(stitchAllImgs): OpenCV Stitcher is null." << std::endl;
+                return false;
+            }
+
+            cv::Stitcher::Status res = cvStitcher->stitch(imgs, curStitchedImg);
+            if (res != cv::Stitcher::OK)
+            {
+                std::cerr << "Error(stitchAllImgs): Failed to stitch images with opencv for index i - "
+                    << i << ", Error code: " << res << std::endl;
+                continue;
+            }
+        }
+        else
+        {
+            ImgPair imgPair(curImages[i], curImages[i+1]);
+            if (!manualStitchImgs(stitcher, imgPair, STITCH_WIDTH_PERCENTAGE, STITCH_HEIGHT_PERCENTAGE, curStitchedImg))
+            {
+                std::cerr << "Error(stitchAllImgs): Failed to manually stitch images for index i - " << i << std::endl;
+                continue;
+            }
+        }
+
+        nextImages.push_back(std::move(curStitchedImg));
+    }
+    auto end = time.now();
+    std::cout << "Total stitch time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << std::endl;
+    curImages.clear();
+
+    // Check if we're done
+    if (nextImages.size() < 2)
+    {
+        if (nextImages.empty())
             return false;
 
         // Acquired the final stitched image
-        stitchedImg = std::move(images.front());
+        cv::Mat stitchedImg;
+        cv::resize(nextImages.back(), stitchedImg, cv::Size(), DISPLAY_PERCENTAGE, DISPLAY_PERCENTAGE);
+        cv::imshow("Stitched Image", stitchedImg);
+
+        cv::waitKey(1);
         return true;
     }
 
-    return stitchAllImgs(mode, nextImages, stitcher, cvStitcher, stitchedImg);
+    if (!stitchImgs(mode, nextImages, stitcher, cvStitcher))
+        return false;
+
+    return true;
 }
 
 bool manualStitchImgs(ImageStitcher& stitcher,
