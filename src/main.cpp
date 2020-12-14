@@ -3,69 +3,49 @@
 #include <thread>
 #include <filesystem>
 #include <vector>
-
 #include <opencv2/opencv.hpp>
 
 #include "ImageStitcher.hpp"
 #include "ImageLoader.hpp"
+#include "StitcherWorker.hpp"
+#include "ThreadSafeDequeue.hpp"
 
-typedef std::pair<cv::Mat, cv::Mat> ImgPair;
-
+bool QUIT_PROCESSING = false;
 const float DISPLAY_PERCENTAGE = 0.3;
-const float STITCH_WIDTH_PERCENTAGE = 0.3;
-const float STITCH_HEIGHT_PERCENTAGE = 1.0;
-
 unsigned long TOTAL_STITCH_TIME = 0;
 unsigned long TOTAL_FINAL_STITCHES = 0;
 std::chrono::high_resolution_clock TIME;
 std::chrono::steady_clock::time_point START_TIME;
 
-enum StitcherMode
-{
-    StitcherMode_Manual = 0,
-    StitcherMode_OpenCV = 1
-};
-
-bool stitchAllImgs(StitcherMode mode,
+bool stitchAllImgs(ThreadSafeDequeue<JobIdPair>& jobQueue,
+                   ThreadSafeDequeue<ResIdPair>& resQueue,
                    ImageLoader& imgLoader,
-                   ImageStitcher& stitcher,
-                   cv::Ptr<cv::Stitcher> cvStitcher);
-
-bool stitchImgs(StitcherMode mode,
-                std::vector<cv::Mat> curImages,
-                ImageStitcher& stitcher,
-                cv::Ptr<cv::Stitcher> cvStitcher);
-
-bool manualStitchImgs(ImageStitcher& stitcher,
-                      const ImgPair& imgPairs,
-                      float roiWidthPerc,
-                      float roiHeightPerc,
-                      cv::Mat& stitchedImg);
+                   const bool& quit);
 
 void printUsage();
 
 int main(int argc, char* argv[])
 {
-    if (argc != 3) {
+    if (argc != 4) {
         printUsage();
         return 1;
     }
 
-    StitcherMode stitchMode = StitcherMode_Manual;
-    cv::Ptr<cv::Stitcher> cvStitcher;
-    ImageStitcher stitcher;
-    if (std::string(argv[1]).find("opencv") != std::string::npos)
+    unsigned int numStitcherWorkerThreads = std::stoul(argv[1]);
+    if (numStitcherWorkerThreads == 0 || numStitcherWorkerThreads > std::thread::hardware_concurrency())
     {
-        stitchMode = StitcherMode_OpenCV;
-        cvStitcher = cv::Stitcher::create();
-        cvStitcher->setRegistrationResol(-1);
-        cvStitcher->setSeamEstimationResol(-1);
-        cvStitcher->setCompositingResol(-1);
-        cvStitcher->setPanoConfidenceThresh(0.3);
+        std::cerr << "Error(main): Number of workers threads must be between 1 and <number-of-physical-cores>.";
+        return 1;
     }
 
+    // Setup stitcher mode
+    ImageStitcher::StitcherMode stitchMode = ImageStitcher::StitcherMode_Manual;
+    if (std::string(argv[2]).find("opencv") != std::string::npos)
+        stitchMode = ImageStitcher::StitcherMode_OpenCV;
+
+    // Load images
     ImageLoader initImgLoader;
-    for (const auto& entry : std::filesystem::directory_iterator(argv[2]))
+    for (const auto& entry : std::filesystem::directory_iterator(argv[3]))
     {
         if (!initImgLoader.loadImages(entry.path().string()))
             std::cerr << "Error(main): Failed to load images from directory - " << entry.path() << std::endl;
@@ -73,23 +53,46 @@ int main(int argc, char* argv[])
             std::cout << "Loaded images from - " << entry.path() << std::endl;
     }
 
-    START_TIME = TIME.now();
-    if (!stitchAllImgs(stitchMode, initImgLoader, stitcher, cvStitcher))
+    // Setup stitcher worker threads and start them
+    ThreadSafeDequeue<JobIdPair> jobQueue;
+    ThreadSafeDequeue<ResIdPair> resQueue;
+    std::vector<std::pair<std::thread, StitcherWorker>> stitcherWorkers;
+    for (int i = 0; i < numStitcherWorkerThreads; i++)
+    {
+        StitcherWorker stitcherWorker(jobQueue, resQueue, stitchMode);
+        std::thread workerThread(&StitcherWorker::run, stitcherWorker);
+        stitcherWorkers.emplace_back(std::pair<std::thread, StitcherWorker>(std::move(workerThread), std::move(stitcherWorker)));
+    }
+
+    // Send all stitch jobs
+    if (!stitchAllImgs(jobQueue, resQueue, initImgLoader, QUIT_PROCESSING))
     {
         std::cerr << "Error(main): Could not stitch images!" << std::endl;
         return 1;
     }
+
+    // Make sure the workers are done
+    for (auto& worker : stitcherWorkers)
+    {
+        worker.second.quit();
+        worker.first.join();
+    }
+
     return 0;
 }
 
 
-bool stitchAllImgs(StitcherMode mode,
+bool stitchAllImgs(ThreadSafeDequeue<JobIdPair>& jobQueue,
+                   ThreadSafeDequeue<ResIdPair>& resQueue,
                    ImageLoader& imgLoader,
-                   ImageStitcher& stitcher,
-                   cv::Ptr<cv::Stitcher> cvStitcher)
+                   const bool& quit)
 {
-    while (true)
+    // Send all the images to the job queue to be stitched together
+    std::cout << "Sending all stitch jobs to job queue." << std::endl;
+    unsigned int jobId(0);
+    while (!quit)
     {
+        // Acquire the next group of images to stitch together
         std::vector<cv::Mat> curImages;
         for (int i = 0; i < imgLoader.getMaxImgId(); i++)
         {
@@ -100,125 +103,74 @@ bool stitchAllImgs(StitcherMode mode,
             curImages.push_back(std::move(img));
         }
 
-        if (curImages.empty())
+        // Check if we're done acquiring images
+        if (curImages.size() != imgLoader.getMaxImgId())
             break;
-
-        stitchImgs(mode, curImages, stitcher, cvStitcher);
+    
+        // Send the group of images to the job queue
+        jobQueue.push(JobIdPair(++jobId, std::move(curImages)));
     }
+    std::cout << "Finished sending all stitch jobs to job queue." << std::endl;
 
-    return true;
-}
-
-bool stitchImgs(StitcherMode mode,
-                std::vector<cv::Mat> curImages,
-                ImageStitcher& stitcher,
-                cv::Ptr<cv::Stitcher> cvStitcher)
-{
-    static int imgNum = 0;
-    std::vector<cv::Mat> nextImages;
-    for (int i = 0; i < curImages.size(); i += 2)
+    // Get the result images
+    std::cout << "Acquiring all stitched images from result queue." << std::endl;
+    jobId = 1;
+    std::vector<ResIdPair> jobResults;
+    while (!quit)
     {
-        cv::Mat curStitchedImg;
-        if (mode == StitcherMode_OpenCV)
+        // Track the time acquired to get result images
+        START_TIME = TIME.now();
+        ResIdPair jobRes = std::move(resQueue.pop());
+
+        // Make sure the image is valid
+        if (jobRes.second.empty())
         {
-            std::vector<cv::Mat> imgs = { curImages[i], curImages[i+1], };
-            if (cvStitcher.empty())
-            {
-                std::cerr << "Error(stitchAllImgs): OpenCV Stitcher is null." << std::endl;
-                return false;
-            }
-
-            cv::Stitcher::Status res = cvStitcher->stitch(imgs, curStitchedImg);
-            if (res != cv::Stitcher::OK)
-            {
-                std::cerr << "Error(stitchAllImgs): Failed to stitch images with opencv for index i - "
-                    << i << ", Error code: " << res << std::endl;
-                continue;
-            }
-        }
-        else
-        {
-            ImgPair imgPair(curImages[i], curImages[i+1]);
-            if (!manualStitchImgs(stitcher, imgPair, STITCH_WIDTH_PERCENTAGE, STITCH_HEIGHT_PERCENTAGE, curStitchedImg))
-            {
-                std::cerr << "Error(stitchAllImgs): Failed to manually stitch images for index i - " << i << std::endl;
-                continue;
-            }
-        }
-
-        nextImages.push_back(std::move(curStitchedImg));
-    }
-    curImages.clear();
-
-    // Check if we're done
-    if (nextImages.size() < 2)
-    {
-        if (nextImages.empty())
+            std::cerr << "Error(stitchAllImgs): Acquired stitched image for id - " << jobRes.first << " is empty." << std::endl;
             return false;
+        }
 
         // Get the time taken to acquire this final stitched image
         auto end = TIME.now();
         TOTAL_STITCH_TIME += std::chrono::duration_cast<std::chrono::milliseconds>(end - START_TIME).count();
-
-        // Acquired the final stitched image
-        cv::Mat stitchedImg;
-        cv::resize(nextImages.back(), stitchedImg, cv::Size(), DISPLAY_PERCENTAGE, DISPLAY_PERCENTAGE);
-        cv::imshow("Stitched Image", stitchedImg);
-        cv::waitKey(1);
-
-        std::cout << "Average time elapsed from last final stitched image: " << TOTAL_STITCH_TIME / ++TOTAL_FINAL_STITCHES << std::endl;
-        START_TIME = TIME.now();
-
-        return true;
-    }
-
-    if (!stitchImgs(mode, nextImages, stitcher, cvStitcher))
-        return false;
-
-    return true;
-}
-
-bool manualStitchImgs(ImageStitcher& stitcher,
-                      const ImgPair& imgPair,
-                      float roiWidthPerc,
-                      float roiHeightPerc,
-                      cv::Mat& stitchedImg)
-{
-    cv::Mat homography;
-    if (roiWidthPerc <= 0.0 || roiHeightPerc <= 0.0)
-    {
-        if (!stitcher.computeHomography(imgPair, homography))
+        if ((++TOTAL_FINAL_STITCHES % 10) == 0)
         {
-            std::cerr << "Error(manualStitchImgs): Failed to compute homography for images." << std::endl;
-            return false;
+            std::cout << "Average time elapsed from last final stitched image: " << TOTAL_STITCH_TIME / TOTAL_FINAL_STITCHES << "ms" << std::endl;
+        }
+
+        // Ensure this job result should be displayed next
+        bool foundResToDisplay = jobRes.first == jobId ? true : false;
+        if (!foundResToDisplay)
+        {
+            jobResults.push_back(std::move(jobRes));
+
+            // See if we have the next job result stored already
+            for (auto itr = jobResults.begin(); itr != jobResults.end(); itr++)
+            {
+                if (itr->first == jobId)
+                {
+                    jobRes = std::move(*itr);
+                    jobResults.erase(itr);
+                    foundResToDisplay = true;
+                    break;
+                }
+            }
+        }
+
+        if (foundResToDisplay)
+        {
+            // Display the stitched image
+            cv::resize(jobRes.second, jobRes.second, cv::Size(), DISPLAY_PERCENTAGE, DISPLAY_PERCENTAGE);
+            cv::imshow("Stitched Image", jobRes.second);
+            cv::waitKey(1);
+            ++jobId;
         }
     }
-    else
-    {
-        if (!stitcher.computeHomography(imgPair, roiWidthPerc, roiHeightPerc, homography))
-        {
-            std::cerr << "Error(manualStitchImgs): Failed to compute homography-roi for images." << std::endl;
-            return false;
-        }
-    }
-
-    std::vector<ImgPair> imgPairs = { imgPair };
-    std::vector<cv::Mat> curStitchedImgs;
-    if (!stitcher.manualStitch(homography, imgPairs, curStitchedImgs))
-    {
-        std::cerr << "Error(manualStitchImgs): Failed to stitch images." << std::endl;
-        return false;
-    }
-
-    stitchedImg = std::move(curStitchedImgs.front());
-    if (stitchedImg.empty())
-        return false;
-
+    std::cout << "Finished acquiring all stitch jobs from result queue." << std::endl;
     return true;
 }
 
 void printUsage() {
-    printf("ParallelPanorama <stitcher-mode | (manual) (opencv)> <top-level-img-directory-path>\n");
+    printf("ParallelPanorama <num-stitcher-worker-threads> <stitcher-mode | (manual) (opencv)> <top-level-img-directory-path>\n");
     printf("NOTE: Top-level image diretory must contain subdirectories that contain images\n");
     printf("\tand are named with a numeric value to represent the image stitch position");
 }

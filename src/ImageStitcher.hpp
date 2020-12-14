@@ -4,6 +4,12 @@
 
 class ImageStitcher {
 public:
+    enum StitcherMode
+    {
+        StitcherMode_Manual = 0,
+        StitcherMode_OpenCV = 1
+    };
+
     ImageStitcher() {};
     ~ImageStitcher() {};
 

@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <set>
 
 #include "ImageLoader.hpp"
 
@@ -20,6 +21,7 @@ bool ImageLoader::loadImages(std::string imgDirPath)
 
     unsigned int id = std::stoul(imgDirPath.substr(subDirBeginIdx, imgDirPath.size() - subDirBeginIdx));
     std::vector<cv::Mat> imgs;
+    std::set<int> imgNameOrdered;
     for (const auto &entry : std::filesystem::directory_iterator(imgDirPath))
     {
         std::string ext(entry.path().extension().string());
@@ -32,7 +34,11 @@ bool ImageLoader::loadImages(std::string imgDirPath)
             std::cerr << "Error(loadImages): Could not load image - " << entry.path() << std::endl;
             return false;
         }
-        imgs.push_back(std::move(img));
+
+        int imgPosition = std::stoul(entry.path().stem().string().c_str());
+        imgPosition = imgPosition > 0 ? imgPosition : 0;
+        imgNameOrdered.insert(imgPosition);
+        imgs.insert(imgs.begin() + std::distance(imgNameOrdered.begin(), imgNameOrdered.find(imgPosition)), std::move(img));
     }
 
     if (imgs.empty())
@@ -125,6 +131,26 @@ const bool ImageLoader::getImages(unsigned int id, std::vector<cv::Mat>& imgs)
     return false;
 }
 
+const bool ImageLoader::getImage(unsigned int id, cv::Mat& img)
+{
+    for (auto imgPair : _imgPairs)
+    {
+        if (imgPair.first == id)
+        {
+            if (imgPair.second->empty())
+                return false;
+
+            img = imgPair.second->front();
+            if (!img.empty())
+                return true;
+
+            break;
+        }
+    }
+
+    return false;
+}
+
 const bool ImageLoader::popImage(unsigned int id, cv::Mat& img)
 {
     for (auto imgPair : _imgPairs)
@@ -134,8 +160,8 @@ const bool ImageLoader::popImage(unsigned int id, cv::Mat& img)
             if (imgPair.second->empty())
                 return false;
 
-            img = std::move(imgPair.second->back());
-            imgPair.second->pop_back();
+            img = std::move(imgPair.second->front());
+            imgPair.second->erase(imgPair.second->begin());
             if (!img.empty())
                 return true;
 

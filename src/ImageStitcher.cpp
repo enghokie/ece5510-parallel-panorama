@@ -79,7 +79,7 @@ const bool ImageStitcher::computeHomography(const std::pair<cv::Mat, cv::Mat>& i
 
     // Match features.
     std::vector<cv::DMatch> matches;
-    cv::Ptr<cv::DescriptorMatcher> matcher = cv::DescriptorMatcher::create("BruteForce-Hamming");
+    cv::Ptr<cv::DescriptorMatcher> matcher = cv::DescriptorMatcher::create("BruteForce");
     matcher->match(descriptors1, descriptors2, matches, cv::Mat());
 
     // Sort matches by score
