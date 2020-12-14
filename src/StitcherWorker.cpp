@@ -15,7 +15,8 @@ void StitcherWorker::run()
         if (!stitchImgs(job.second, stitchedImg))
             continue; // implement spdlog to do thread safe logging
 
-        _resQueue.push(ResIdPair(job.first, std::move(stitchedImg)));
+         ResIdPair pair(job.first, std::move(stitchedImg));
+        _resQueue.push(pair);
     }
 }
 

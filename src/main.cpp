@@ -108,7 +108,8 @@ bool stitchAllImgs(ThreadSafeDequeue<JobIdPair>& jobQueue,
             break;
     
         // Send the group of images to the job queue
-        jobQueue.push(JobIdPair(++jobId, std::move(curImages)));
+        JobIdPair pair(++jobId, std::move(curImages));
+        jobQueue.push(pair);
     }
     std::cout << "Finished sending all stitch jobs to job queue." << std::endl;
 
